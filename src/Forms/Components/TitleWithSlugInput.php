@@ -4,9 +4,10 @@ namespace Camya\Filament\Forms\Components;
 
 use Camya\Filament\Forms\Fields\SlugInput;
 use Closure;
-use Filament\Forms\Components\Group;
-use Filament\Forms\Components\Hidden;
 use Filament\Forms\Components\TextInput;
+use Filament\Schemas\Components\Group;
+use Filament\Schemas\Components\Utilities\Get;
+use Filament\Schemas\Components\Utilities\Set;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Str;
 
@@ -15,8 +16,8 @@ class TitleWithSlugInput
     public static function make(
 
         // Model fields
-        string|null $fieldTitle = null,
-        string|null $fieldSlug = null,
+        ?string $fieldTitle = null,
+        ?string $fieldSlug = null,
 
         // Url
         string|Closure|null $urlPath = '/',
@@ -24,11 +25,11 @@ class TitleWithSlugInput
         bool $urlHostVisible = true,
         bool|Closure $urlVisitLinkVisible = true,
         null|Closure|string $urlVisitLinkLabel = null,
-        null|Closure $urlVisitLinkRoute = null,
+        ?Closure $urlVisitLinkRoute = null,
 
         // Title
         string|Closure|null $titleLabel = null,
-        string|null $titlePlaceholder = null,
+        ?string $titlePlaceholder = null,
         array|Closure|null $titleExtraInputAttributes = null,
         array $titleRules = [
             'required',
@@ -36,17 +37,17 @@ class TitleWithSlugInput
         array $titleRuleUniqueParameters = [],
         bool|Closure $titleIsReadonly = false,
         bool|Closure $titleAutofocus = true,
-        null|Closure $titleAfterStateUpdated = null,
+        ?Closure $titleAfterStateUpdated = null,
 
         // Slug
-        string|null $slugLabel = null,
+        ?string $slugLabel = null,
         array $slugRules = [
             'required',
         ],
         array $slugRuleUniqueParameters = [],
         bool|Closure $slugIsReadonly = false,
-        null|Closure $slugAfterStateUpdated = null,
-        null|Closure $slugSlugifier = null,
+        ?Closure $slugAfterStateUpdated = null,
+        ?Closure $slugSlugifier = null,
         string|Closure|null $slugRuleRegex = '/^[a-z0-9\-\_]*$/',
         string|Closure|null $slugLabelPostfix = null,
     ): Group {
@@ -58,17 +59,17 @@ class TitleWithSlugInput
         $textInput = TextInput::make($fieldTitle)
             ->disabled($titleIsReadonly)
             ->autofocus($titleAutofocus)
-            ->reactive()
+            ->live()
             ->disableAutocomplete()
             ->rules($titleRules)
             ->extraInputAttributes($titleExtraInputAttributes ?? ['class' => 'text-xl font-semibold'])
             ->beforeStateDehydrated(fn (TextInput $component, $state) => $component->state(trim($state)))
             ->afterStateUpdated(
                 function (
-                    $state,
-                    Closure $set,
-                    Closure $get,
-                    string $context,
+                    Get $get,
+                    Set $set,
+                    ?string $old,
+                    ?string $state,
                     ?Model $record,
                     TextInput $component
                 ) use (
@@ -76,13 +77,14 @@ class TitleWithSlugInput
                     $fieldSlug,
                     $titleAfterStateUpdated,
                 ) {
-                    $slugAutoUpdateDisabled = $get('slug_auto_update_disabled');
+                    $currentSlug = (string) ($get($fieldSlug) ?? '');
+                    $generatedSlugFromPreviousTitle = self::slugify($slugSlugifier, $old);
+                    $shouldAutoUpdateSlug = blank($currentSlug) || ($currentSlug === $generatedSlugFromPreviousTitle);
 
-                    if ($context === 'edit' && filled($record)) {
-                        $slugAutoUpdateDisabled = true;
-                    }
-
-                    if (! $slugAutoUpdateDisabled && filled($state)) {
+                    if (
+                        $shouldAutoUpdateSlug &&
+                        filled($state)
+                    ) {
                         $set($fieldSlug, self::slugify($slugSlugifier, $state));
                     }
 
@@ -133,17 +135,17 @@ class TitleWithSlugInput
             ->slugInputSlugLabelPostfix($slugLabelPostfix)
 
             // Default TextInput methods
-            ->readonly($slugIsReadonly)
-            ->reactive()
+            ->readOnly($slugIsReadonly)
+            ->live()
             ->disableAutocomplete()
             ->disableLabel()
             ->regex($slugRuleRegex)
             ->rules($slugRules)
             ->afterStateUpdated(
                 function (
-                    $state,
-                    Closure $set,
-                    Closure $get,
+                    Get $get,
+                    Set $set,
+                    ?string $state,
                     TextInput $component
                 ) use (
                     $slugSlugifier,
@@ -153,11 +155,9 @@ class TitleWithSlugInput
                 ) {
                     $text = trim($state) === ''
                         ? $get($fieldTitle)
-                        : $get($fieldSlug);
+                        : $state;
 
                     $set($fieldSlug, self::slugify($slugSlugifier, $text));
-
-                    $set('slug_auto_update_disabled', true);
 
                     if ($slugAfterStateUpdated) {
                         $component->evaluate($slugAfterStateUpdated);
@@ -173,22 +173,17 @@ class TitleWithSlugInput
             ? $slugInput->unique(...$slugRuleUniqueParameters)
             : $slugInput->unique(ignorable: fn (?Model $record) => $record);
 
-        /** Input: "Slug Auto Update Disabled" (Hidden) */
-        $hiddenInputSlugAutoUpdateDisabled = Hidden::make('slug_auto_update_disabled')
-            ->dehydrated(false);
-
         /** Group */
 
         return Group::make()
             ->schema([
                 $textInput,
                 $slugInput,
-                $hiddenInputSlugAutoUpdateDisabled,
             ]);
     }
 
     /** Fallback slugifier, over-writable with slugSlugifier parameter. */
-    protected static function slugify(Closure|null $slugifier, string|null $text): string
+    protected static function slugify(?Closure $slugifier, ?string $text): string
     {
         if (is_null($text) || ! trim($text)) {
             return '';
